@@ -51,7 +51,8 @@ public enum LLMServiceFactory {
     public static func createLocalService(
         baseURL: URL = URL(string: "http://localhost:11434/api")!,
         modelName: String = "llama3",
-        systemPrompt: String? = nil
+        systemPrompt: String? = nil,
+        timeoutInterval: TimeInterval = 1800
     ) -> LLMServiceProtocol {
         // Try to load config from file
         let config = loadConfiguration()
@@ -64,8 +65,10 @@ public enum LLMServiceFactory {
         // Override with explicit parameters if provided
         let finalBaseURL = baseURL.absoluteString != "http://localhost:11434/api" ? baseURL : URL(string: configURL)!
         let finalModel = modelName != "llama3" ? modelName : configModel
+        let configTimeout = config["timeout"] as? Double ?? 1800.0
+        let finalTimeout = timeoutInterval != 1800 ? timeoutInterval : configTimeout
 
-        return LLMService(baseURL: finalBaseURL, modelName: finalModel, systemPrompt: systemPrompt)
+        return LLMService(baseURL: finalBaseURL, modelName: finalModel, systemPrompt: systemPrompt, timeoutInterval: finalTimeout)
     }
 
     /// Create a remote LLM service (OpenAI)
@@ -124,7 +127,7 @@ public enum LLMServiceFactory {
         } else {
             // For local service, force a local-compatible model
             let defaultLocalModel = "llama3"
-            return createLocalService(modelName: defaultLocalModel, systemPrompt: systemPrompt)
+            return createLocalService(modelName: defaultLocalModel, systemPrompt: systemPrompt, timeoutInterval: 1800)
         }
     }
 

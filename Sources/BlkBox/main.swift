@@ -57,7 +57,7 @@ struct Configure: ParsableCommand {
         var config: [String: Any] = [
             "service": "local",
             "model": "llama3",
-            "timeout": 600,
+            "timeout": 1800,
             "baseURL": "http://localhost:11434/api"
         ]
 

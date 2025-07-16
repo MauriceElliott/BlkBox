@@ -14,7 +14,8 @@ public class LLMService: LLMServiceProtocol {
     public init(
         baseURL: URL = URL(string: "http://localhost:11434/api")!,
         modelName: String = "llama3",
-        systemPrompt: String? = nil
+        systemPrompt: String? = nil,
+        timeoutInterval: TimeInterval = 1800
     ) {
         let defaultSystemPrompt = Self.createDefaultSystemPrompt()
 
@@ -81,11 +82,11 @@ public class LLMService: LLMServiceProtocol {
         task.resume()
 
         // Wait for response with timeout
-        let timeoutResult = semaphore.wait(timeout: .now() + 600)
+        let timeoutResult = semaphore.wait(timeout: .now() + 1800)
 
         // Check for timeout
         if timeoutResult == .timedOut {
-            print("❌ Request timed out after 600 seconds")
+            print("❌ Request timed out after 1800 seconds")
             throw LLMError.timeoutError
         }
 
