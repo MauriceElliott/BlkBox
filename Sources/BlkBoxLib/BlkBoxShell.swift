@@ -4,12 +4,22 @@ import Rainbow
 /// Interactive shell for BlkBox
 public class BlkBoxShell {
     private let notesManager: NotesManager
-    private let llmService: LLMService
+    private let llmService: LLMServiceProtocol
     private var isRunning = false
 
-    public init(notesPath: String? = nil) {
+    public init(notesPath: String? = nil, useRemoteLLM: Bool = false, apiKey: String? = nil) {
         self.notesManager = NotesManager(path: notesPath)
-        self.llmService = LLMService()
+
+        if useRemoteLLM {
+            // When explicitly using remote LLM, use a compatible model (GPT)
+            self.llmService = LLMServiceFactory.createRemoteService(
+                apiKey: apiKey,
+                modelName: "gpt-3.5-turbo"
+            )
+        } else {
+            // Use configuration-based service creation by default
+            self.llmService = LLMServiceFactory.createFromConfig(apiKey: apiKey)
+        }
     }
 
     /// Start the interactive shell
@@ -18,17 +28,33 @@ public class BlkBoxShell {
 
         // Check if LLM service is available
         if !llmService.isAvailable() {
-            print("⚠️  ".yellow.bold + "Warning: Unable to connect to Ollama service")
-            print("Make sure Ollama is running locally (http://localhost:11434)".yellow)
+            print("⚠️  ".yellow.bold + "Warning: Unable to connect to LLM service")
+
+            if llmService is LLMService {
+                print("Make sure Ollama is running locally (http://localhost:11434)".yellow)
+            } else if llmService is RemoteLLMService {
+                print("Make sure your internet connection and API key are valid".yellow)
+            }
+
             print("Continuing in limited mode...\n".yellow)
         } else {
             // Check if the model is available
             if !llmService.isModelAvailable() {
                 print("⚠️  ".yellow.bold + "Warning: Model '\(llmService.modelName)' may not be available")
-                print("Try running: ollama pull \(llmService.modelName)".yellow)
+
+                if llmService is LLMService {
+                    print("Try running: ollama pull \(llmService.modelName)".yellow)
+                } else if llmService is RemoteLLMService {
+                    print("Make sure you're using a valid model name for the API".yellow)
+                }
+
                 print("Continuing, but LLM features may not work correctly...\n".yellow)
             } else {
-                print("✅ Connected to Ollama with model: \(llmService.modelName)".green)
+                if llmService is LLMService {
+                    print("✅ Connected to Ollama with model: \(llmService.modelName)".green)
+                } else if llmService is RemoteLLMService {
+                    print("✅ Connected to OpenAI API with model: \(llmService.modelName)".green)
+                }
             }
         }
 
@@ -80,6 +106,9 @@ public class BlkBoxShell {
         case "status":
             showStatus()
 
+        case "llm":
+            showLLMInfo()
+
         default:
             // Pass to LLM for interpretation
             handleUnknownCommand(command: command, args: args, fullInput: input)
@@ -97,6 +126,7 @@ public class BlkBoxShell {
         print("  find".blue.bold + " <query>          Search for notes matching the query")
         print("  list".blue.bold + "                  List note categories and counts")
         print("  status".blue.bold + "                Show system status")
+        print("  llm".blue.bold + "                   Show LLM service information")
         print("  exit".blue.bold + "                  Exit BlkBox shell")
         print("\nFor any command, you can type a question or request and BlkBox will try to help.\n")
     }
@@ -278,9 +308,19 @@ public class BlkBoxShell {
             print("Model: \(diagnostics["modelName"] ?? "unknown")")
             print("Model Available: " + ((diagnostics["modelAvailable"] == "Yes") ? "Yes ✅".green : "No ❌".red))
             print("Base URL: \(diagnostics["baseURL"] ?? "unknown")")
+
+            if llmService is RemoteLLMService {
+                print("Service Type: Remote (OpenAI API)")
+            } else if llmService is LLMService {
+                print("Service Type: Local (Ollama)")
+            }
         } else {
-            print("Make sure Ollama is running locally (http://localhost:11434)".yellow)
-            print("Try: ollama serve".yellow)
+            if llmService is LLMService {
+                print("Make sure Ollama is running locally (http://localhost:11434)".yellow)
+                print("Try: ollama serve".yellow)
+            } else if llmService is RemoteLLMService {
+                print("Make sure your internet connection and API key are valid".yellow)
+            }
         }
 
         // Display notes path and count
@@ -327,6 +367,13 @@ public class BlkBoxShell {
         if !llmService.isAvailable() {
             print("I don't understand the command '\(command)'. Type 'help' for available commands.".yellow)
             print("Note: LLM service is not available, so natural language commands won't work.".yellow)
+
+            if llmService is LLMService {
+                print("Make sure Ollama is running locally.".yellow)
+            } else if llmService is RemoteLLMService {
+                print("Check your internet connection and API key.".yellow)
+            }
+
             return
         }
 
@@ -355,6 +402,53 @@ public class BlkBoxShell {
     }
 
     // MARK: - Helper Methods
+
+    /// Show information about the current LLM service
+    private func showLLMInfo() {
+        print("\n" + "🤖 LLM SERVICE INFORMATION".green.bold)
+        print("═════════════════════════".green)
+
+        // Check if service is available
+        let isAvailable = llmService.isAvailable()
+        print("Service Status: " + (isAvailable ? "Connected ✅".green : "Not Connected ❌".red))
+
+        // Show LLM type
+        if llmService is LLMService {
+            print("Service Type: Local (Ollama)")
+        } else if llmService is RemoteLLMService {
+            print("Service Type: Remote (OpenAI API)")
+        }
+
+        // Show model info
+        print("Model: \(llmService.modelName)")
+        if isAvailable {
+            let modelAvailable = llmService.isModelAvailable()
+            print("Model Available: " + (modelAvailable ? "Yes ✅".green : "No ❌".red))
+
+            if !modelAvailable {
+                if llmService is LLMService {
+                    print("\nTo install the model, run: ".yellow)
+                    print("  ollama pull \(llmService.modelName)".yellow.bold)
+                } else if llmService is RemoteLLMService {
+                    print("\nCheck that you're using a valid model name for OpenAI API".yellow)
+                }
+            }
+        }
+
+        // Show configuration tips
+        print("\nConfiguration:")
+        print("  To change LLM settings, use 'blkbox configure' outside the shell")
+        print("  Configuration File: ~/.blkbox/config.json")
+
+        // Show LLM diagnostics
+        if isAvailable {
+            let diagnostics = llmService.getDiagnostics()
+            print("\nConnection Details:")
+            print("  Base URL: \(diagnostics["baseURL"] ?? "unknown")")
+        }
+
+        print("")
+    }
 
     private func readMultilineInput() -> String? {
         var lines = [String]()

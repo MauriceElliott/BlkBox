@@ -36,7 +36,7 @@ public class NotesManager {
     }
 
     /// Generate insights from existing notes using the provided LLM service
-    public func generateInsights(usingLLM llm: LLMService, topic: String? = nil, limit: Int = 5) throws -> [String] {
+    public func generateInsights(usingLLM llm: LLMServiceProtocol, topic: String? = nil, limit: Int = 5) throws -> [String] {
         do {
             // Collect notes content
             let notesContent = try collectNotesContent()
@@ -64,7 +64,7 @@ public class NotesManager {
     }
 
     /// Add a new note, using LLM to categorize and place it appropriately
-    public func addNote(content: String, usingLLM llm: LLMService) throws {
+    public func addNote(content: String, usingLLM llm: LLMServiceProtocol) throws {
         do {
             // Create a prompt to analyze and categorize the note
             let prompt = createNoteCategorizationPrompt(content: content)
@@ -100,7 +100,7 @@ public class NotesManager {
     }
 
     /// Retrieve notes based on query and optional type
-    public func retrieveNotes(query: String, type: String? = nil, usingLLM llm: LLMService) throws -> [NoteSearchResult] {
+    public func retrieveNotes(query: String, type: String? = nil, usingLLM llm: LLMServiceProtocol) throws -> [NoteSearchResult] {
         do {
             // Collect notes content
             let notesContent = try collectNotesContent()

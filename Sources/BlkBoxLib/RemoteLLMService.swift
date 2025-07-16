@@ -4,46 +4,58 @@ import FoundationNetworking
 #endif
 import Dispatch
 
-/// Service for interacting with a local LLM (currently Ollama)
-public class LLMService: LLMServiceProtocol {
+/// Service for interacting with a remote LLM (OpenAI API)
+public class RemoteLLMService: LLMServiceProtocol {
+    private let apiKey: String
     private let baseURL: URL
     public let modelName: String
     private let systemPrompt: String
+    private let timeout: TimeInterval
 
-    /// Initialize the LLM service with optional configuration
+    /// Initialize the Remote LLM service with required configuration
     public init(
-        baseURL: URL = URL(string: "http://localhost:11434/api")!,
-        modelName: String = "llama3",
-        systemPrompt: String? = nil
+        apiKey: String,
+        baseURL: URL = URL(string: "https://api.openai.com/v1")!,
+        modelName: String = "gpt-3.5-turbo",
+        systemPrompt: String? = nil,
+        timeoutInterval: TimeInterval = 600
     ) {
         let defaultSystemPrompt = Self.createDefaultSystemPrompt()
 
+        self.apiKey = apiKey
         self.baseURL = baseURL
         self.modelName = modelName
         self.systemPrompt = systemPrompt ?? defaultSystemPrompt
+        self.timeout = timeoutInterval
     }
 
     /// Send a query to the LLM and get a response
     public func query(prompt: String) throws -> String {
-        // First check if the LLM service is available
+        // First check if we can connect to the API
         if !isAvailable() {
-            print("⚠️ Warning: LLM service appears to be unavailable.")
+            print("⚠️ Warning: Remote LLM service appears to be unavailable.")
             throw LLMError.connectionFailed
         }
 
-        let endpoint = baseURL.appendingPathComponent("generate")
+        let endpoint = baseURL.appendingPathComponent("chat/completions")
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
         request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.addValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
 
         print("🔄 Preparing query to model: \(modelName)")
 
         // Create the request payload
+        let messages: [[String: String]] = [
+            ["role": "system", "content": systemPrompt],
+            ["role": "user", "content": prompt]
+        ]
+
         let payload: [String: Any] = [
             "model": modelName,
-            "prompt": prompt,
-            "system": systemPrompt,
-            "stream": false
+            "messages": messages,
+            "temperature": 0.7,
+            "max_tokens": 2048
         ]
 
         do {
@@ -69,16 +81,16 @@ public class LLMService: LLMServiceProtocol {
             semaphore.signal()
         }
 
-        print("🔄 Sending request to LLM...")
+        print("🔄 Sending request to OpenAI...")
         let task = URLSession.shared.dataTask(with: request, completionHandler: taskHandler)
         task.resume()
 
         // Wait for response with timeout
-        let timeoutResult = semaphore.wait(timeout: .now() + 600)
+        let timeoutResult = semaphore.wait(timeout: .now() + timeout)
 
         // Check for timeout
         if timeoutResult == .timedOut {
-            print("❌ Request timed out after 600 seconds")
+            print("❌ Request timed out after \(Int(timeout)) seconds")
             throw LLMError.timeoutError
         }
 
@@ -86,6 +98,9 @@ public class LLMService: LLMServiceProtocol {
         if let httpResponse = capturedResponse as? HTTPURLResponse,
            !(200...299).contains(httpResponse.statusCode) {
             print("❌ HTTP error: \(httpResponse.statusCode)")
+            if let data = capturedData, let body = String(data: data, encoding: .utf8) {
+                print("Response body: \(body)")
+            }
             throw LLMError.queryFailed("HTTP error: \(httpResponse.statusCode)")
         }
 
@@ -96,23 +111,30 @@ public class LLMService: LLMServiceProtocol {
         }
 
         guard let data = capturedData else {
-            print("❌ No data received from LLM service")
+            print("❌ No data received from OpenAI service")
             throw LLMError.queryFailed("No data received")
         }
 
         // Parse the response
         do {
             if let json = try JSONSerialization.jsonObject(with: data, options: []) as? [String: Any] {
-                if let errorMessage = json["error"] as? String {
-                    print("❌ LLM service returned error: \(errorMessage)")
-                    throw LLMError.queryFailed("LLM error: \(errorMessage)")
+                if let errorInfo = json["error"] as? [String: Any],
+                   let errorMessage = errorInfo["message"] as? String {
+                    print("❌ OpenAI API returned error: \(errorMessage)")
+                    throw LLMError.queryFailed("API error: \(errorMessage)")
                 }
 
-                if let response = json["response"] as? String {
-                    print("✅ Successfully received response from LLM")
-                    return response
+                if let choices = json["choices"] as? [[String: Any]],
+                   let firstChoice = choices.first,
+                   let message = firstChoice["message"] as? [String: Any],
+                   let content = message["content"] as? String {
+                    print("✅ Successfully received response from OpenAI")
+                    return content
                 } else {
-                    print("❌ Response does not contain expected 'response' field")
+                    print("❌ Response does not contain expected format")
+                    if let dataString = String(data: data, encoding: .utf8) {
+                        print("Raw response: \(dataString)")
+                    }
                     throw LLMError.responseParsingFailed
                 }
             } else {
@@ -130,15 +152,16 @@ public class LLMService: LLMServiceProtocol {
         }
     }
 
-    /// Check if the LLM service is available
+    /// Check if the OpenAI API is available
     public func isAvailable() -> Bool {
-        print("🔄 Checking if LLM service is available...")
+        print("🔄 Checking if OpenAI API is available...")
 
-        // Try to reach the Ollama API
-        let endpoint = baseURL.appendingPathComponent("tags")
+        // Try to reach the OpenAI API with a simple request
+        let endpoint = baseURL.appendingPathComponent("models")
         var request = URLRequest(url: endpoint)
         request.httpMethod = "GET"
         request.timeoutInterval = 5.0 // Short timeout for quick checking
+        request.addValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
 
         let semaphore = DispatchSemaphore(value: 0)
 
@@ -157,9 +180,9 @@ public class LLMService: LLMServiceProtocol {
             if let httpResponse = response as? HTTPURLResponse {
                 let isSuccess = (200...299).contains(httpResponse.statusCode)
                 if isSuccess {
-                    print("✅ LLM service is available")
+                    print("✅ OpenAI API is available")
                 } else {
-                    print("❌ LLM service returned status code: \(httpResponse.statusCode)")
+                    print("❌ OpenAI API returned status code: \(httpResponse.statusCode)")
                 }
                 result = isSuccess
             }
@@ -171,7 +194,7 @@ public class LLMService: LLMServiceProtocol {
 
         let timeoutResult = semaphore.wait(timeout: .now() + 5)
         if timeoutResult == .timedOut {
-            print("❌ LLM service check timed out")
+            print("❌ OpenAI API check timed out")
             return false
         }
 
@@ -186,6 +209,7 @@ public class LLMService: LLMServiceProtocol {
         var request = URLRequest(url: endpoint)
         request.httpMethod = "GET"
         request.timeoutInterval = 5.0
+        request.addValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
 
         let semaphore = DispatchSemaphore(value: 0)
         var modelFound = false
@@ -199,9 +223,9 @@ public class LLMService: LLMServiceProtocol {
 
             do {
                 if let json = try JSONSerialization.jsonObject(with: data, options: []) as? [String: Any],
-                   let models = json["models"] as? [[String: Any]] {
+                   let models = json["data"] as? [[String: Any]] {
                     for model in models {
-                        if let name = model["name"] as? String, name == self.modelName {
+                        if let id = model["id"] as? String, id == self.modelName {
                             print("✅ Model '\(self.modelName)' is available")
                             modelFound = true
                             break
@@ -254,7 +278,7 @@ public class LLMService: LLMServiceProtocol {
         // Since we can't modify the systemPrompt directly as it's a let property,
         // we would need to use a different approach in a real implementation
         print("✅ System prompt update requested: \(prompt)")
-        print("Note: To actually update the system prompt, create a new LLMService instance with the new prompt")
+        print("Note: To actually update the system prompt, create a new RemoteLLMService instance with the new prompt")
     }
 
     /// Get diagnostic information about the LLM service
