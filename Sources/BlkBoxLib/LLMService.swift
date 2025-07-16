@@ -97,11 +97,11 @@ public class LLMService {
         task.resume()
 
         // Wait for response with timeout
-        let timeoutResult = semaphore.wait(timeout: .now() + 60)
+        let timeoutResult = semaphore.wait(timeout: .now() + 600)
 
         // Check for timeout
         if timeoutResult == .timedOut {
-            print("❌ Request timed out after 60 seconds")
+            print("❌ Request timed out after 600 seconds")
             throw LLMError.timeoutError
         }
 
