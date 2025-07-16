@@ -31,6 +31,13 @@ public class LLMService: LLMServiceProtocol {
             throw LLMError.connectionFailed
         }
 
+        // Check if model is available
+        if !isModelAvailable() {
+            print("⚠️ Warning: Model '\(modelName)' is not available.")
+            print("   To install the model, run: ollama pull \(self.modelName)")
+            throw LLMError.modelNotAvailable
+        }
+
         let endpoint = baseURL.appendingPathComponent("generate")
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
@@ -82,17 +89,17 @@ public class LLMService: LLMServiceProtocol {
             throw LLMError.timeoutError
         }
 
+        // Handle network errors
+        if let error = capturedError {
+            print("❌ Network error: \(error.localizedDescription)")
+            throw LLMError.queryFailed("Request failed: \(error.localizedDescription)")
+        }
+
         // Check for HTTP errors
         if let httpResponse = capturedResponse as? HTTPURLResponse,
            !(200...299).contains(httpResponse.statusCode) {
             print("❌ HTTP error: \(httpResponse.statusCode)")
             throw LLMError.queryFailed("HTTP error: \(httpResponse.statusCode)")
-        }
-
-        // Handle response
-        if let error = capturedError {
-            print("❌ Network error: \(error.localizedDescription)")
-            throw LLMError.queryFailed("Request failed: \(error.localizedDescription)")
         }
 
         guard let data = capturedData else {
@@ -182,7 +189,14 @@ public class LLMService: LLMServiceProtocol {
     public func isModelAvailable() -> Bool {
         print("🔄 Checking if model '\(modelName)' is available...")
 
-        let endpoint = baseURL.appendingPathComponent("models")
+        // First check if LLM service is available at all
+        if !isAvailable() {
+            print("❌ Cannot check for model availability since Ollama is not running")
+            return false
+        }
+
+        // Use the tags endpoint instead of models
+        let endpoint = baseURL.appendingPathComponent("tags")
         var request = URLRequest(url: endpoint)
         request.httpMethod = "GET"
         request.timeoutInterval = 5.0
@@ -210,6 +224,7 @@ public class LLMService: LLMServiceProtocol {
 
                     if !modelFound {
                         print("❌ Model '\(self.modelName)' not found in available models")
+                        print("   To install the model, run: ollama pull \(self.modelName)")
                     }
                 }
             } catch {
@@ -267,5 +282,67 @@ public class LLMService: LLMServiceProtocol {
         diagnostics["modelAvailable"] = isModelAvailable() ? "Yes" : "No"
 
         return diagnostics
+    }
+
+    /// List all available models from the Ollama API
+    public func listAvailableModels() -> [String] {
+        print("🔄 Listing all available models...")
+
+        if !isAvailable() {
+            print("❌ Cannot list models: Ollama service is not available")
+            return []
+        }
+
+        let endpoint = baseURL.appendingPathComponent("tags")
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 5.0
+
+        let semaphore = DispatchSemaphore(value: 0)
+        var modelList: [String] = []
+
+        let taskHandler = { @Sendable (data: Data?, response: URLResponse?, error: Error?) -> Void in
+            if let error = error {
+                print("❌ Error fetching models: \(error.localizedDescription)")
+                semaphore.signal()
+                return
+            }
+
+            guard let data = data,
+                  let httpResponse = response as? HTTPURLResponse,
+                  (200...299).contains(httpResponse.statusCode) else {
+                if let httpResponse = response as? HTTPURLResponse {
+                    print("❌ HTTP error fetching models: \(httpResponse.statusCode)")
+                }
+                semaphore.signal()
+                return
+            }
+
+            do {
+                if let json = try JSONSerialization.jsonObject(with: data, options: []) as? [String: Any],
+                   let models = json["models"] as? [[String: Any]] {
+
+                    print("📋 Found \(models.count) available models:")
+
+                    for model in models {
+                        if let name = model["name"] as? String {
+                            modelList.append(name)
+                            print("   - \(name)")
+                        }
+                    }
+                }
+            } catch {
+                print("❌ Error parsing models response: \(error.localizedDescription)")
+            }
+
+            semaphore.signal()
+        }
+
+        let task = URLSession.shared.dataTask(with: request, completionHandler: taskHandler)
+        task.resume()
+
+        _ = semaphore.wait(timeout: .now() + 5)
+
+        return modelList
     }
 }
