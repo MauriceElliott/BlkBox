@@ -1,0 +1,42 @@
+# Swift Package Manager
+.build/
+/.build
+/Packages
+xcuserdata/
+DerivedData/
+.swiftpm/
+Package.resolved
+
+# Xcode
+*.xcodeproj/*
+!*.xcodeproj/project.pbxproj
+!*.xcodeproj/xcshareddata/
+!*.xcworkspace/contents.xcworkspacedata
+/*.gcno
+**/xcshareddata/WorkspaceSettings.xcsettings
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Linux
+*~
+.directory
+.Trash-*
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Config files
+.env
+.env.local
+
+# Notes storage (default location)
+/.blkbox/notes/*
+
+# Debug
+*.dSYM/
